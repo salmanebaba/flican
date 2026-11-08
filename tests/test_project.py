@@ -22,7 +22,7 @@ class TestProjectInit(unittest.TestCase):
 
             config = load_config(project / "flican.yaml")
             self.assertEqual(config["project"]["name"], "demo-api")
-            self.assertEqual(config["scanners"], ["gitleaks", "semgrep"])
+            self.assertEqual(config["scanners"], ["gitleaks", "semgrep", "trivy"])
             self.assertEqual(config["policy"]["fail_on"], Severity.HIGH)
 
     def test_preserves_existing_configuration(self):
