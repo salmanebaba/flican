@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flican"
+version = "0.1.0.dev0"
+description = "Local security scanning and pipeline orchestration."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "typer==0.27.3",
+    "PyYAML==6.0.3",
+]
+
+[project.scripts]
+flican = "flican.cli.main:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["flican", "flican.*"]
+
+[tool.setuptools.package-data]
+flican = ["rules/semgrep/*.yaml", "rules/checkov/*.yaml", "platform/*.yaml"]

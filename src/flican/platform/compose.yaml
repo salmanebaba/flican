@@ -1,0 +1,123 @@
+name: flican-defectdojo
+
+x-app-environment: &app-environment
+  DD_DEBUG: "False"
+  DD_ALLOWED_HOSTS: "127.0.0.1,localhost"
+  DD_CSRF_TRUSTED_ORIGINS: "http://127.0.0.1:${FLICAN_DOJO_PORT},http://localhost:${FLICAN_DOJO_PORT}"
+  DD_DATABASE_URL: "postgresql://flican:${FLICAN_DOJO_DB_PASSWORD}@postgres:5432/flican_dojo"
+  DD_CELERY_BROKER_URL: "redis://valkey:6379/0"
+  DD_CACHE_URL: "redis://valkey:6379/1"
+  DD_SECRET_KEY: "${FLICAN_DOJO_SECRET_KEY}"
+  DD_CREDENTIAL_AES_256_KEY: "${FLICAN_DOJO_AES_KEY}"
+  DD_DATABASE_READINESS_TIMEOUT: "120"
+  DD_UWSGI_MODE: socket
+  DD_UWSGI_ENDPOINT: "0.0.0.0:3031"
+  DD_UWSGI_NUM_OF_PROCESSES: "2"
+  DD_UWSGI_NUM_OF_THREADS: "2"
+  DD_CELERY_LOG_LEVEL: WARNING
+  DD_CELERY_WORKER_POOL_TYPE: prefork
+  DD_CELERY_WORKER_CONCURRENCY: "1"
+  DD_CELERY_WORKER_AUTOSCALE_MAX: "1"
+  DD_CELERY_WORKER_AUTOSCALE_MIN: "1"
+  DD_CELERY_WORKER_PREFETCH_MULTIPLIER: "1"
+  DD_DEDUPLICATION_ALGORITHM_PER_PARSER: '{"Flican Gitleaks (Generic Findings Import)":"unique_id_from_tool","Flican Semgrep (Generic Findings Import)":"unique_id_from_tool","Flican Trivy (Generic Findings Import)":"unique_id_from_tool","Flican Checkov (Generic Findings Import)":"unique_id_from_tool"}'
+  DD_HASHCODE_FIELDS_PER_SCANNER: '{"Flican Gitleaks (Generic Findings Import)":["unique_id_from_tool"],"Flican Semgrep (Generic Findings Import)":["unique_id_from_tool"],"Flican Trivy (Generic Findings Import)":["unique_id_from_tool"],"Flican Checkov (Generic Findings Import)":["unique_id_from_tool"]}'
+
+x-app: &app
+  image: defectdojo/defectdojo-django:3.4.304@sha256:6c767c6faab7bdf5df56fffe7ff8f140174c8104130c52a6ae63d74b11eefc8e
+  pull_policy: never
+  environment: *app-environment
+  networks: [dojo]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+
+services:
+  postgres:
+    image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    pull_policy: never
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      POSTGRES_DB: flican_dojo
+      POSTGRES_USER: flican
+      POSTGRES_PASSWORD: "${FLICAN_DOJO_DB_PASSWORD}"
+    volumes: [postgres:/var/lib/postgresql/data]
+    networks: [dojo]
+    mem_limit: 768m
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U flican -d flican_dojo"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  valkey:
+    image: valkey/valkey:9.1.2-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11
+    pull_policy: never
+    volumes: [valkey:/data]
+    networks: [dojo]
+    mem_limit: 128m
+    healthcheck:
+      test: [CMD, valkey-cli, ping]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  initializer:
+    <<: *app
+    entrypoint: [/entrypoint-initializer.sh]
+    environment:
+      <<: *app-environment
+      DD_INITIALIZE: "true"
+      DD_ADMIN_USER: flican-admin
+      DD_ADMIN_MAIL: admin@flican.local
+      DD_ADMIN_FIRST_NAME: Flican
+      DD_ADMIN_LAST_NAME: Admin
+      DD_ADMIN_PASSWORD: "${FLICAN_DOJO_ADMIN_PASSWORD}"
+      DD_JIRA_WEBHOOK_SECRET: "${FLICAN_DOJO_WEBHOOK_SECRET}"
+    depends_on:
+      postgres: {condition: service_healthy}
+    mem_limit: 1536m
+  uwsgi:
+    <<: *app
+    entrypoint: [/entrypoint-uwsgi.sh]
+    volumes: [media:/app/media]
+    depends_on:
+      initializer: {condition: service_completed_successfully}
+      valkey: {condition: service_healthy}
+    mem_limit: 1536m
+  celeryworker:
+    <<: *app
+    entrypoint: [/entrypoint-celery-worker.sh]
+    volumes: [media:/app/media]
+    depends_on:
+      initializer: {condition: service_completed_successfully}
+      valkey: {condition: service_healthy}
+    mem_limit: 1024m
+  celerybeat:
+    <<: *app
+    entrypoint: [/entrypoint-celery-beat.sh]
+    depends_on:
+      initializer: {condition: service_completed_successfully}
+      valkey: {condition: service_healthy}
+    mem_limit: 384m
+  nginx:
+    image: defectdojo/defectdojo-nginx:3.4.304@sha256:7d7f663b2f0d209fd7abdd6b595fe981d96d46b6f15feceae4020fb826b350c5
+    pull_policy: never
+    environment:
+      DD_UWSGI_HOST: uwsgi
+      DD_UWSGI_PORT: "3031"
+      NGINX_METRICS_ENABLED: "false"
+    depends_on: [uwsgi]
+    volumes: [media:/usr/share/nginx/html/media]
+    ports: ["127.0.0.1:${FLICAN_DOJO_PORT}:8080"]
+    networks: [dojo, web]
+    mem_limit: 128m
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+
+networks:
+  dojo:
+    internal: true
+  web: {}
+
+volumes:
+  postgres: {}
+  valkey: {}
+  media: {}

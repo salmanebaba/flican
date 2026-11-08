@@ -1,0 +1,10 @@
+# Flican owns this profile; project-local Checkov config must not be loaded.
+framework:
+  - terraform
+  - dockerfile
+output:
+  - json
+skip-download: true
+skip-results-upload: true
+download-external-modules: false
+soft-fail: false

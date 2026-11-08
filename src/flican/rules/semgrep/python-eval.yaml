@@ -1,0 +1,9 @@
+rules:
+  - id: flican.python.eval
+    languages:
+      - python
+    severity: HIGH
+    message: >-
+      Review this eval() call. Untrusted input can execute
+      arbitrary Python code. Prefer a parser for the expected input format.
+    pattern: eval(...)

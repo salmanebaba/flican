@@ -1,0 +1,15 @@
+rules:
+  - id: flican.python.subprocess-shell
+    languages:
+      - python
+    severity: HIGH
+    message: >-
+      Review this subprocess call with shell=True. Untrusted input
+      in the command can cause shell injection. Prefer shell=False
+      with an argument list when shell features are unnecessary.
+    pattern-either:
+      - pattern: subprocess.run(..., shell=True, ...)
+      - pattern: subprocess.Popen(..., shell=True, ...)
+      - pattern: subprocess.call(..., shell=True, ...)
+      - pattern: subprocess.check_call(..., shell=True, ...)
+      - pattern: subprocess.check_output(..., shell=True, ...)

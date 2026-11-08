@@ -1,0 +1,69 @@
+name: Flican source security
+description: Run configured pinned scanners and collect artifacts while preserving the security gate.
+inputs:
+  project:
+    description: Existing project with flican.yaml, relative to the workspace.
+    required: false
+    default: .
+  artifact-directory:
+    description: Fresh bundle directory under workspace/.flican/.
+    required: false
+    default: .flican/ci-artifacts
+  trivy-cache-directory:
+    description: Optional Trivy cache directory; defaults to the runner temporary directory.
+    required: false
+    default: ''
+outputs:
+  artifact-directory:
+    description: Bundle to upload even after the security step fails.
+    value: ${{ inputs.artifact-directory }}
+  tool:
+    description: Absolute Flican command path for later steps in the same job.
+    value: ${{ steps.install.outputs.tool }}
+runs:
+  using: composite
+  steps:
+    - name: Install isolated Flican
+      id: install
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        FLICAN_ACTION_SOURCE: ${{ github.action_path }}
+      run: |
+        set -eu
+        flican_venv="$(mktemp -d "$RUNNER_TEMP/flican-tool.XXXXXX")"
+        python3 -m venv "$flican_venv"
+        "$flican_venv/bin/python" -m pip --disable-pip-version-check install "$FLICAN_ACTION_SOURCE"
+        printf 'tool=%s\n' "$flican_venv/bin/flican" >> "$GITHUB_OUTPUT"
+    - name: Prepare pinned scanner images and database
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        FLICAN_TOOL: ${{ steps.install.outputs.tool }}
+        FLICAN_PROJECT: ${{ inputs.project }}
+        FLICAN_CACHE_INPUT: ${{ inputs.trivy-cache-directory }}
+      run: |
+        set -eu
+        flican_cache="${FLICAN_CACHE_INPUT:-$RUNNER_TEMP/flican-trivy-cache}"
+        "$FLICAN_TOOL" ci prepare "$FLICAN_PROJECT" --trivy-cache-dir "$flican_cache"
+    - name: Scan and collect this invocation
+      if: ${{ always() && !cancelled() && steps.install.outcome == 'success' }}
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        FLICAN_TOOL: ${{ steps.install.outputs.tool }}
+        FLICAN_PROJECT: ${{ inputs.project }}
+        FLICAN_BUNDLE: ${{ inputs.artifact-directory }}
+        FLICAN_CACHE_INPUT: ${{ inputs.trivy-cache-directory }}
+      run: |
+        set -eu
+        flican_reference_dir="$(mktemp -d "$RUNNER_TEMP/flican-reference.XXXXXX")"
+        export FLICAN_STATE_DIR="$RUNNER_TEMP/flican-state"
+        flican_cache="${FLICAN_CACHE_INPUT:-$RUNNER_TEMP/flican-trivy-cache}"
+        flican_scan_exit=0
+        "$FLICAN_TOOL" scan "$FLICAN_PROJECT" \
+          --trivy-cache-dir "$flican_cache" \
+          --result-file "$flican_reference_dir/result.json" || flican_scan_exit=$?
+        "$FLICAN_TOOL" ci collect "$flican_reference_dir/result.json" \
+          --scan-exit "$flican_scan_exit" --workspace "$GITHUB_WORKSPACE" \
+          --output-dir "$FLICAN_BUNDLE"

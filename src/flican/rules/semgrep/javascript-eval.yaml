@@ -1,0 +1,11 @@
+rules:
+  - id: flican.javascript.eval
+    languages:
+      - javascript
+      - typescript
+    severity: HIGH
+    message: >-
+      Review this eval() call. Untrusted input can execute
+      arbitrary JavaScript. Prefer a parser for the expected
+      data format.
+    pattern: eval(...)

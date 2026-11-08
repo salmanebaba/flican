@@ -1,0 +1,15 @@
+.venv/
+.local/
+.flican/
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+build/
+dist/
+.env
+.env.*
+# Downloaded CI bundles and image archives are generated evidence.
+/flican-allow-*/
+/flican-block-*/
+/flican-incomplete-*/
+*.oci.tar

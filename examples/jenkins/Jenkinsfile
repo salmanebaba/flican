@@ -1,0 +1,114 @@
+// Demo: check out the Flican repository at the Jenkins workspace root.
+// The agent must provide Python, Docker, and the flican command in PATH.
+pipeline {
+    agent { label 'flican-linux' }
+
+    stages {
+        stage('Check tools') {
+            steps {
+                sh '''
+                    python3 --version
+                    command -v flican
+                    flican doctor
+                '''
+            }
+        }
+        stage('Prepare project') {
+            steps {
+                sh '''
+                    python3 "$WORKSPACE/tests/helpers/demo_project.py" \
+                        --scenario allow \
+                        --output "project-${BUILD_NUMBER}"
+
+                    ls -la "project-${BUILD_NUMBER}"
+                    flican plan "project-${BUILD_NUMBER}"
+                '''
+            }
+        }
+        stage('Application tests') {
+            steps {
+                dir("project-${env.BUILD_NUMBER}") {
+                    sh 'python3 -m unittest discover -s tests -v'
+                }
+            }
+        }
+        stage('Prepare scanners') {
+            steps {
+                sh '''
+                    flican ci prepare "project-${BUILD_NUMBER}" \
+                        --workflow \
+                        --trivy-cache-dir "$WORKSPACE/.flican/cache/trivy"
+                '''
+            }
+        }
+
+        stage('Scan source') {
+            steps {
+                sh '''
+                    scan_exit=0
+
+                    flican scan "project-${BUILD_NUMBER}" \
+                        --trivy-cache-dir "$WORKSPACE/.flican/cache/trivy" \
+                        --result-file "$WORKSPACE/.flican/ci/build-${BUILD_NUMBER}/source.json" \
+                        || scan_exit=$?
+
+                    echo "flican exit code: $scan_exit"
+
+                    flican ci collect \
+                        "$WORKSPACE/.flican/ci/build-${BUILD_NUMBER}/source.json" \
+                        --exit-code "$scan_exit" \
+                        --workspace "$WORKSPACE" \
+                        --output-dir "$WORKSPACE/.flican/ci/build-${BUILD_NUMBER}/source-bundle"
+                '''
+            }
+        }
+        stage('Build image') {
+            steps {
+                sh '''
+                    ci_root="$WORKSPACE/.flican/ci/build-${BUILD_NUMBER}"
+                    mkdir -p "$ci_root"
+
+                    docker buildx build \
+                        --builder default \
+                        --platform linux/amd64 \
+                        --network=none \
+                        --provenance=false \
+                        --sbom=false \
+                        --file "project-${BUILD_NUMBER}/Dockerfile.build" \
+                        --output "type=oci,compression=gzip,force-compression=true,dest=$ci_root/candidate.oci.tar" \
+                        "project-${BUILD_NUMBER}"
+
+                    ls -lh "$ci_root/candidate.oci.tar"
+                '''
+            }
+        }
+        stage('Image security gate') {
+            steps {
+                sh '''
+                    ci_root="$WORKSPACE/.flican/ci/build-${BUILD_NUMBER}"
+                    image_exit=0
+
+                    flican image scan "project-${BUILD_NUMBER}" \
+                        --input "$ci_root/candidate.oci.tar" \
+                        --trivy-cache-dir "$WORKSPACE/.flican/cache/trivy" \
+                        --result-file "$ci_root/image.json" \
+                        || image_exit=$?
+
+                    echo "Image scan exit code: $image_exit"
+
+                    flican ci collect "$ci_root/image.json" \
+                        --exit-code "$image_exit" \
+                        --workspace "$WORKSPACE" \
+                        --output-dir "$ci_root/image-bundle"
+                '''
+            }
+        }
+    }
+    post {
+        always {
+            archiveArtifacts artifacts: ".flican/ci/build-${env.BUILD_NUMBER}/*-bundle/**",
+                allowEmptyArchive: true,
+                defaultExcludes: false
+        }
+    }
+}

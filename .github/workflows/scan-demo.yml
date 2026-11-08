@@ -1,0 +1,101 @@
+name: Flican demo security
+run-name: Flican ${{ inputs.scenario }}
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Synthetic project; block and incomplete intentionally fail the pipeline.
+        type: choice
+        required: true
+        default: allow
+        options: [allow, block, incomplete]
+permissions:
+  contents: read
+concurrency:
+  group: flican-demo-${{ inputs.scenario }}
+  cancel-in-progress: false
+jobs:
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: .flican/demo-project
+    steps:
+      - name: Checkout trusted tool source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.12'
+      - name: Set up Docker for OCI export
+        uses: docker/setup-docker-action@3f1ab1ab0e29231562e4db4ca600c1a49653bac6 # v5
+        with:
+          set-host: true
+          daemon-config: |
+            {"features": {"containerd-snapshotter": true}}
+      - name: Prepare disposable project
+        working-directory: ${{ github.workspace }}
+        env:
+          SCENARIO: ${{ inputs.scenario }}
+        run: python3 tests/helpers/demo_project.py --scenario "$SCENARIO" --output .flican/demo-project
+      - name: Application tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Flican security gate
+        id: source
+        uses: ./
+        with:
+          project: .flican/demo-project
+          artifact-directory: .flican/ci-artifacts
+      - name: Build OCI image
+        run: |
+          set -eu
+          image_dir="$RUNNER_TEMP/flican-image"
+          mkdir -p "$image_dir"
+
+          docker buildx build \
+            --builder default \
+            --platform linux/amd64 \
+            --network=none \
+            --provenance=false \
+            --sbom=false \
+            --file Dockerfile.build \
+            --output "type=oci,compression=gzip,force-compression=true,dest=$image_dir/candidate.oci.tar" \
+            .
+
+          ls -lh "$image_dir/candidate.oci.tar"
+      - name: Image security gate
+        working-directory: ${{ github.workspace }}
+        env:
+          FLICAN_TOOL: ${{ steps.source.outputs.tool }}
+          FLICAN_STATE_DIR: ${{ runner.temp }}/flican-state
+        run: |
+          set -eu
+          image_dir="$RUNNER_TEMP/flican-image"
+
+          "$FLICAN_TOOL" ci prepare .flican/demo-project --workflow \
+            --trivy-cache-dir "$RUNNER_TEMP/flican-trivy-cache"
+
+          image_exit=0
+          "$FLICAN_TOOL" image scan .flican/demo-project \
+            --input "$image_dir/candidate.oci.tar" \
+            --trivy-cache-dir "$RUNNER_TEMP/flican-trivy-cache" \
+            --result-file "$image_dir/result.json" || image_exit=$?
+
+          "$FLICAN_TOOL" ci collect "$image_dir/result.json" \
+            --exit-code "$image_exit" \
+            --workspace "$GITHUB_WORKSPACE" \
+            --output-dir .flican/image-artifacts
+      - name: Archive reports even when the gate blocks
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: flican-${{ inputs.scenario }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .flican/ci-artifacts/
+            .flican/image-artifacts/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
