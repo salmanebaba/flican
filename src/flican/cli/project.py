@@ -34,7 +34,7 @@ def init_project(
                 ".local",
             ],
         },
-        "scanners": ["gitleaks", "semgrep"],
+        "scanners": ["gitleaks", "semgrep", "trivy"],
         "policy": {"fail_on": "high"},
     }
 
