@@ -25,9 +25,11 @@ git diff --check
 ```
 
 The [tool CI workflow](docs/TOOL_CI.md) builds and verifies a wheel, installs it,
-and runs unit tests on pushes/PRs for `dev` and `main`. Its tested wheel and
-checksum are retained as a GitHub Actions artifact. The separate `scan-demo.yml`
-workflow exercises scanners on synthetic application projects.
+and runs unit tests on pushes/PRs for `dev` and `main`. A separate security job
+uses Flican to scan the repository and the resolved dependencies of its isolated
+installation. The tested wheel/checksum and security reports are retained as
+GitHub Actions artifacts. The separate `scan-demo.yml` workflow exercises
+scanners on synthetic application projects.
 
 For workflow changes, run `actionlint .github/workflows/*.yml` to check GitHub
 expressions and supported contexts. See [tool CI validation](docs/TOOL_CI.md).

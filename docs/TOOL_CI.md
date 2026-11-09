@@ -1,8 +1,10 @@
 # Flican's own continuous integration
 
 [ci.yml](../.github/workflows/ci.yml) checks Flican itself on pushes to `dev` or
-`main`, pull requests targeting either branch, and manual dispatch. It uses one
-Ubuntu 24.04 job with Python 3.12 and a ten-minute timeout.
+`main`, pull requests targeting either branch (including every PR to `main`),
+and manual dispatch. Two independent Ubuntu 24.04 jobs use Python 3.12:
+`Unit tests and wheel (Python 3.12)` has a ten-minute timeout, and
+`Flican security scan` has a twenty-minute timeout.
 
 This differs from [scan-demo.yml](../.github/workflows/scan-demo.yml), which
 manually exercises Flican's scanners against synthetic application projects.
@@ -36,8 +38,37 @@ list along with package data.
 
 Unit tests run with Python isolated mode. Docker/Dojo test flags are explicitly
 disabled; scanner images, vulnerability databases, and a local Dojo server are
-not prerequisites. A unit failure stops subsequent upload. This artifact is a
+not prerequisites for the unit job. A unit failure stops its subsequent upload.
+This artifact is a
 tested development wheel, not publication to PyPI, GHCR, or a GitHub Release.
+
+## Security scan
+
+The independent `security` job checks the current checkout using the local
+composite action (`uses: ./`). It scans the repository with the scanners and
+policy in the root `flican.yaml`; the current profile selects Gitleaks, Semgrep,
+and Trivy. Generated build/output directories are excluded.
+
+The job also audits the actual installation, because scanning repository
+fixtures alone does not audit dependencies declared in `pyproject.toml`:
+
+1. Read distribution names and versions from the composite action's isolated
+   environment, excluding Flican itself and the pip bootstrap package.
+2. Export every other installed distribution, including transitive dependencies,
+   to a generated `requirements.txt` under `.flican/runtime-dependencies/`.
+3. Scan that project with Trivy and the root `policy.fail_on` threshold.
+4. Collect the current invocation's reports with the same private state.
+
+Dependency auditing is attempted even if the source gate blocks, provided the
+Flican installation is available. A source failure remains a job failure; a
+later successful dependency scan cannot erase it. Missing prerequisites,
+unusable reports, and collection failures also fail the job.
+
+The `flican-security-RUN_ID-ATTEMPT` artifact is uploaded even after a gate
+failure and retains available source/dependency bundles plus the exported
+dependency versions for seven days. Scanner images and the vulnerability
+database are prepared in this job. Application image builds and Dojo are not
+part of this self-scan.
 
 The workflow has `contents: read`, pinned action commits, and cancellation of
 superseded runs for the same branch/PR. It needs no cloud/registry/Dojo secrets.
@@ -56,8 +87,10 @@ python tests/helpers/verify_wheel.py "$wheel_check"/*.whl
 
 Use a fresh build checkout when validating packaging. Stale generated files in
 `build/` must not leak into a new wheel. The verifier catches unexpected files.
-CI checks out fresh source and installs its built wheel before running tests;
-the local development command above uses the editable environment.
+CI checks out fresh source and installs its built wheel before running unit
+tests; the local development command above uses the editable environment. The
+independent security job installs the same source through the composite action.
+Its dependency manifest reflects that Linux/Python 3.12 installation.
 
 For workflow edits, install [actionlint](https://github.com/rhysd/actionlint) and
 check GitHub Actions expressions and context availability before pushing:
@@ -74,16 +107,24 @@ when changing expression placement.
 ## Read CI results
 
 Open **Actions → Flican CI** in the repository and select the relevant run.
-Inspect individual steps on failure. After success, download the
-`flican-wheel-RUN_ID-ATTEMPT` artifact. From its extracted directory, verify:
+Inspect the unit/package and security jobs separately. Security reports are
+available in `flican-security-RUN_ID-ATTEMPT`, including after a gate blocks.
+After unit/package success, download `flican-wheel-RUN_ID-ATTEMPT`. From its
+extracted directory, verify:
 
 ```bash
 sha256sum --check SHA256SUMS
 ```
 
-Unit-test success checks the installed Python package. Real scanner/Docker/Dojo
-coverage is exercised separately through the tests and scenarios in the
-[contribution guide](../CONTRIBUTING.md) and [CI templates](CI_TEMPLATES.md).
+To require both jobs before merging, add `Flican security scan` alongside
+`Unit tests and wheel (Python 3.12)` in the repository's `protect-main` required
+status checks after the first security run. Workflow triggers and repository
+rulesets are configured separately.
+
+Unit tests check the installed Python package, while the security job executes
+scanner containers against the repository and exported dependency versions.
+Application-container, OCI, and Dojo integration scenarios remain documented in
+the [contribution guide](../CONTRIBUTING.md) and [CI templates](CI_TEMPLATES.md).
 
 References: [workflow triggers](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows),
 [setup-python caching](https://github.com/actions/setup-python#caching-packages-dependencies),

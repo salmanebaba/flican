@@ -1,20 +1,19 @@
 schema_version: 1
-
 project:
   name: flican
   exclude:
-    - .git
-    - .venv
-    - node_modules
-    - __pycache__
-    - .flican
-    - .local
-    - build
-    - dist
-
+  - .git
+  - .venv
+  - node_modules
+  - __pycache__
+  - .flican
+  - .local
+  - build
+  - dist
+  - coverage
+scanners:
+- gitleaks
+- semgrep
+- trivy
 policy:
   fail_on: high
-
-scanners:
-  - gitleaks
-  - semgrep
