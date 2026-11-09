@@ -148,8 +148,9 @@ adapt project paths, tests, and Dockerfile. See [examples/README.md](../examples
 Source fixture: [calculator](../tests/fixtures/projects/calculator/README.md).
 Workflow destination `.flican/demo-project` is generated, not the versioned fixture.
 The passing fixture is not a coverage benchmark: all four scanners execute, but
-an empty dependency file does not exercise CVE detection. `block` retains the
-vulnerable dependency.
+an empty dependency file does not exercise CVE detection. `block` and
+`incomplete` generate an intentionally old dependency in their disposable copy;
+the versioned calculator requirements remain dependency-free.
 
 ## Verify an integration
 

@@ -13,6 +13,8 @@ def prepare_project(scenario: str, output: Path) -> None:
         raise ValueError("The disposable demo destination must be fresh.")
     shutil.copytree(root / "tests/fixtures/projects/calculator", output,
                     ignore=shutil.ignore_patterns(".flican", "__pycache__"))
+    if scenario in {"block", "incomplete"}:
+        (output / "requirements.txt").write_text("requests==2.31.0\n", encoding="utf-8")
     if scenario == "allow":
         fixtures = root / "tests/fixtures/checkov"
         shutil.copyfile(fixtures / "corrected/main.tf", output / "infra/main.tf")

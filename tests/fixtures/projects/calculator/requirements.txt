@@ -1,1 +1,2 @@
-requests==2.31.0
+# The base calculator fixture has no third-party dependencies.
+# Vulnerable SCA dependencies are generated only for explicit test scenarios.

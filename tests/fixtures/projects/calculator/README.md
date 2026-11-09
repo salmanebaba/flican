@@ -7,14 +7,16 @@ the user wheel.
 | File | Purpose |
 | --- | --- |
 | `app.py`, `tests/test_app.py` | Standard-library calculator and three unittest tests |
-| `requirements.txt` | Deliberately old SCA dependency, with no implicit installation |
+| `requirements.txt` | Dependency-free base; the generator adds the SCA test dependency |
 | `infra/main.tf` | Deliberately weak Terraform configuration for Checkov |
 | `Dockerfile` | Static fixture: port 22, USER, and HEALTHCHECK checks |
 | `Dockerfile.build` | Pinned Python build, copies `app.py`, uses USER 65532:65532 |
 | `flican.yaml` | Scanners, policy, and optional test/build commands |
 
-Dependencies in `requirements.txt` are not installed in the calculator image.
-Source SCA and image SBOM inventories can therefore differ.
+The versioned `requirements.txt` contains no third-party dependencies. The
+generator writes an intentionally old dependency only into disposable `block`
+and `incomplete` projects. These declarations are not installed in the calculator
+image, so source SCA and image SBOM inventories can differ.
 
 ## Prepare a disposable copy
 
@@ -30,10 +32,12 @@ flican plan "$fixture_dir/project"
 
 The [generator](../../../helpers/demo_project.py) accepts three scenarios:
 
-- `allow`: substitutes corrected Terraform/Dockerfile fixtures and clears the
-  dependency declaration in this copy;
-- `block`: retains the vulnerable fixtures and old dependency;
-- `incomplete`: introduces an invalid Dockerfile to check exit code `2`.
+- `allow`: substitutes corrected Terraform/Dockerfile fixtures and keeps the
+  dependency declaration empty;
+- `block`: retains vulnerable Terraform/Dockerfile fixtures and generates the
+  old SCA dependency in this copy;
+- `incomplete`: generates the old SCA dependency and introduces an invalid
+  Dockerfile to check exit code `2`.
 
 `allow` describes the source gate; the image gate depends on real image packages
 and the database used. Finding counts vary with that database. Each generator

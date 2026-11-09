@@ -70,3 +70,91 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 7
+
+  security:
+    name: Flican security scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.12'
+      - name: Scan Flican source
+        id: source
+        uses: ./
+        with:
+          project: .
+          artifact-directory: .flican/source-artifacts
+      - name: Export and prepare installed runtime dependencies
+        if: ${{ always() && !cancelled() && steps.source.outputs.tool != '' }}
+        shell: bash
+        env:
+          FLICAN_TOOL: ${{ steps.source.outputs.tool }}
+          FLICAN_STATE_DIR: ${{ runner.temp }}/flican-state
+          FLICAN_TRIVY_CACHE: ${{ runner.temp }}/flican-trivy-cache
+        run: |
+          set -euo pipefail
+          flican_python="$(dirname "$FLICAN_TOOL")/python"
+          "$flican_python" -I - <<'PY'
+          import os
+          from importlib.metadata import distributions
+          from pathlib import Path
+          import yaml
+          from flican.core.config import load_config
+
+          root = Path(os.environ['GITHUB_WORKSPACE'])
+          config = load_config(root / 'flican.yaml')
+          requirements = sorted({
+              f"{dist.metadata['Name']}=={dist.version}"
+              for dist in distributions()
+              if dist.metadata['Name'].lower() not in {'flican', 'pip'}
+          }, key=str.lower)
+          if not requirements:
+              raise SystemExit('No installed dependencies were found to audit.')
+          project = root / '.flican/runtime-dependencies'
+          project.mkdir(parents=True)
+          (project / 'requirements.txt').write_text('\n'.join(requirements) + '\n')
+          (project / 'flican.yaml').write_text(yaml.safe_dump({
+              'schema_version': 1,
+              'project': {'name': 'flican-runtime-dependencies', 'exclude': []},
+              'scanners': ['trivy'],
+              'policy': {'fail_on': config['policy']['fail_on'].value},
+          }, sort_keys=False))
+          print(f'Exported {len(requirements)} installed dependencies.')
+          PY
+          "$FLICAN_TOOL" ci prepare .flican/runtime-dependencies \
+            --trivy-cache-dir "$FLICAN_TRIVY_CACHE"
+      - name: Scan installed runtime dependencies
+        if: ${{ always() && !cancelled() && steps.source.outputs.tool != '' }}
+        shell: bash
+        env:
+          FLICAN_TOOL: ${{ steps.source.outputs.tool }}
+          FLICAN_STATE_DIR: ${{ runner.temp }}/flican-state
+          FLICAN_TRIVY_CACHE: ${{ runner.temp }}/flican-trivy-cache
+        run: |
+          set -euo pipefail
+          dependency_exit=0
+          "$FLICAN_TOOL" scan .flican/runtime-dependencies \
+            --trivy-cache-dir "$FLICAN_TRIVY_CACHE" \
+            --result-file "$RUNNER_TEMP/flican-dependencies-result.json" || dependency_exit=$?
+          "$FLICAN_TOOL" ci collect "$RUNNER_TEMP/flican-dependencies-result.json" \
+            --exit-code "$dependency_exit" \
+            --workspace "$GITHUB_WORKSPACE" \
+            --output-dir .flican/dependency-artifacts
+      - name: Archive security reports and dependency versions
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: flican-security-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .flican/source-artifacts/
+            .flican/dependency-artifacts/
+            .flican/runtime-dependencies/requirements.txt
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
